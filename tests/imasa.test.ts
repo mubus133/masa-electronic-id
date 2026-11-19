@@ -26,6 +26,7 @@ import {
   redeemDailyAuthorization,
 } from "@/lib/services/authorizations";
 import type { Actor } from "@/lib/permissions";
+import { todayIso } from "@/lib/time";
 
 describe("IMASA Electronic Student ID & Verification Platform Test Suite", () => {
   let presidentActor: Actor;
@@ -148,7 +149,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     const session = await createSession(
       {
         sessionName: "Test Friday Maghrib Class",
-        sessionDate: new Date().toISOString().slice(0, 10),
+        sessionDate: todayIso("Africa/Lagos"),
         weekday: "Friday",
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
@@ -247,7 +248,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     const session = await createSession(
       {
         sessionName: "Saturday Circle",
-        sessionDate: new Date().toISOString().slice(0, 10),
+        sessionDate: todayIso("Africa/Lagos"),
         weekday: "Saturday",
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
@@ -284,7 +285,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     const session = await createSession(
       {
         sessionName: "Sunday Review",
-        sessionDate: new Date().toISOString().slice(0, 10),
+        sessionDate: todayIso("Africa/Lagos"),
         weekday: "Sunday",
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
@@ -355,7 +356,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     const session = await createSession(
       {
         sessionName: "Unassigned Session",
-        sessionDate: new Date().toISOString().slice(0, 10),
+        sessionDate: todayIso("Africa/Lagos"),
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
       },
@@ -371,7 +372,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     const session = await createSession(
       {
         sessionName: "Hash Check",
-        sessionDate: new Date().toISOString().slice(0, 10),
+        sessionDate: todayIso("Africa/Lagos"),
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
         teacherIds: [teacherActor.teacherId!],
@@ -410,7 +411,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     const session = await createSession(
       {
         sessionName: "Typed Code",
-        sessionDate: new Date().toISOString().slice(0, 10),
+        sessionDate: todayIso("Africa/Lagos"),
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
         teacherIds: [teacherActor.teacherId!],
