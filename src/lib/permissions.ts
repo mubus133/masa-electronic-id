@@ -14,6 +14,7 @@ export const GRANTABLE_PERMISSIONS = [
   { key: "authorizations.revoke", label: "Revoke authorizations", detail: "Withdraw an issued daily authorization." },
   { key: "reports.view", label: "View reports", detail: "Open operational reports and CSV exports." },
   { key: "audit.view", label: "View audit logs", detail: "Read the append-only audit history." },
+  { key: "website.edit", label: "Edit website", detail: "Change the home page text, photo and announcement." },
 ] as const;
 
 export type Permission = (typeof GRANTABLE_PERMISSIONS)[number]["key"];

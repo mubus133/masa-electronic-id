@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { handleApiRoute } from "@/lib/api-helper";
+import { badRequest, forbidden, isActiveHostelStaff, notFound, requireGrant } from "@/lib/access";
 import { requireActor } from "@/lib/auth";
-import { getStudentByRegistration, getStudentById } from "@/lib/services/students";
+import { getStudentById, getStudentByRegistration } from "@/lib/services/students";
 import { verifyDailyAuthorization } from "@/lib/services/authorizations";
 
 export async function GET(req: NextRequest) {
@@ -11,24 +12,14 @@ export async function GET(req: NextRequest) {
     const regNo = url.searchParams.get("regNo");
     const studentId = url.searchParams.get("studentId");
 
-    let targetStudentId = studentId;
+    const staff = isActiveHostelStaff(actor);
+    if (!staff) requireGrant(actor, "authorizations.view");
 
-    if (!targetStudentId && regNo) {
-      const student = await getStudentByRegistration(regNo);
-      if (!student) {
-        throw new Error(`No student found with registration number: "${regNo}".`);
-      }
-      targetStudentId = student.id;
-    }
+    const student = studentId ? await getStudentById(studentId) : regNo ? await getStudentByRegistration(regNo) : null;
+    if (!studentId && !regNo) throw badRequest("Enter a registration number or pick a student.");
+    if (!student) throw notFound("No student matches that search.");
+    if (staff && student.hostel_id !== actor.hostelId) throw forbidden("This student is outside your hostel.");
 
-    if (!targetStudentId) {
-      throw new Error("Student ID or registration number is required for verification.");
-    }
-
-    // Pass hostel ID of current actor if hostel staff
-    const hostelStaffHostelId = actor.role === "hostel_staff" ? actor.hostelId : null;
-    const result = await verifyDailyAuthorization(targetStudentId, hostelStaffHostelId);
-
-    return result;
+    return verifyDailyAuthorization(student.id, staff ? actor.hostelId : null);
   });
 }

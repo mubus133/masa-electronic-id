@@ -1,5 +1,5 @@
 import { database } from "@/lib/db";
-import { hashPassword } from "@/lib/crypto";
+import { hashPassword, newTemporaryPassword } from "@/lib/crypto";
 import { DomainError, isUniqueViolation } from "@/lib/errors";
 import { logAudit } from "@/lib/audit";
 import type { Actor } from "@/lib/permissions";
@@ -13,11 +13,16 @@ export interface RegisterTeacherInput {
   password?: string;
 }
 
+// Skips codes already taken (for example ones typed in by hand or seeded).
 export async function generateNextTeacherCode(): Promise<string> {
   const db = database();
-  const rows = await db.query<{ nextval: string }>("SELECT nextval('teacher_code_seq')::text as nextval");
-  const num = rows[0]?.nextval || String(Date.now()).slice(-3);
-  return `T-${num}`;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const rows = await db.query<{ nextval: string }>("SELECT nextval('teacher_code_seq')::text as nextval");
+    const code = `T-${rows[0].nextval}`;
+    const taken = await db.query("SELECT 1 FROM teachers WHERE teacher_code = $1", [code]);
+    if (!taken.length) return code;
+  }
+  throw new DomainError("Couldn't pick a teacher code. Enter one by hand.", 500);
 }
 
 export async function listTeachers(): Promise<Teacher[]> {
@@ -57,8 +62,8 @@ export async function getTeacherByUserId(userId: string): Promise<Teacher | null
 export async function registerTeacher(input: RegisterTeacherInput, actor: Actor): Promise<Teacher> {
   const db = database();
   const teacherCode = input.teacherCode || (await generateNextTeacherCode());
-  const defaultPassword = input.password || "Teacher-Imasa-2026!";
-  const passwordHash = await hashPassword(defaultPassword);
+  const temporaryPassword = input.password || newTemporaryPassword();
+  const passwordHash = await hashPassword(temporaryPassword);
 
   return await db.transaction(async (tx) => {
     let userRows;
@@ -105,6 +110,6 @@ export async function registerTeacher(input: RegisterTeacherInput, actor: Actor)
       newValue: { id: teacher.id, code: teacherCode, email: input.email },
     });
 
-    return teacher;
+    return { ...teacher, temporary_password: temporaryPassword };
   });
 }

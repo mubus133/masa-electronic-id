@@ -1,37 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# IMASA Electronic ID
 
-## Getting Started
+Electronic student IDs, Madrasa attendance and hostel passes for IMASA, built from the
+*Electronic Student ID & Attendance Verification Blueprint* (v1.0).
 
-First, run the development server:
+The core rule: a student's permanent ID shows who she is. Only teacher-confirmed attendance at a
+**completed** session gives her a pass for that night, and hostel staff always check it live.
+
+## Run it locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000. Without `DATABASE_URL` the app uses an embedded Postgres (PGlite)
+stored in `.data/imasa` and fills it with demo data.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Demo accounts (password `Imasa-Demo-2026`), also listed on the sign-in page in development:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Role | Email |
+| --- | --- |
+| President | president@imasa.demo |
+| Administrator | admin@imasa.demo |
+| Teacher | teacher@imasa.demo |
+| Hostel staff | hostel@imasa.demo |
+| Student | khadijah@imasa.demo |
+| Suspended student | aisha@imasa.demo |
 
-## Learn More
+```bash
+npm test
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Production
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string (e.g. Supabase). Migrations in `supabase/migrations` run on start. |
+| `SESSION_SECRET` | Long random string used to sign sign-in cookies. **Required**: the app refuses to start without it. |
+| `SEED_DEMO` | Leave unset (or `false`) in production so no demo accounts are created. |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Apply `supabase/migrations/002_rls.sql` in Supabase for row-level security on direct client access.
 
-## Deploy on Vercel
+## Portals
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **Students**: ID, check-in (camera scan or typed 8-character code), attendance, passes, report a problem.
+- **Teachers**: open check-in, show the rotating code full screen, confirm/late/reject, check in a student
+  by hand (no phone), complete the session to issue passes.
+- **Hostel staff**: search their own hostel's students, see the live verdict with photo, admit, record a
+  denial or an emergency entry.
+- **Administration**: students (register, edit, suspend, revoke, reinstate, reset password), teachers,
+  hostels and staff, sessions, attendance, passes, reports and CSV exports, support requests, audit log,
+  administrators and their permissions (President only), settings, and the public website.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# masa-electronic-id
+## Changing the home page
+
+Sign in as the President (or an administrator with **Edit website**), open **Administration → Website**,
+upload the class photo and edit the headline, introduction and an optional announcement strip.
+
+## Still to decide
+
+Section 18 of the blueprint lists policy decisions for IMASA management (pass expiry, late attendance,
+one-time entry, emergency entry, retention). They are configurable under **Settings**; the overview shows a
+reminder until they are marked approved. Not built yet: MFA for privileged accounts, the offline check-in
+procedure, and self-service password reset by email (resets are done by an administrator).

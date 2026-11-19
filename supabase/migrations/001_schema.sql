@@ -65,9 +65,14 @@ CREATE TABLE IF NOT EXISTS administrator_permissions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES users (id),
   permission text NOT NULL,
+  granted_by uuid REFERENCES users (id),
+  granted_at timestamptz NOT NULL DEFAULT now(),
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, permission)
 );
+
+ALTER TABLE administrator_permissions ADD COLUMN IF NOT EXISTS granted_by uuid REFERENCES users (id);
+ALTER TABLE administrator_permissions ADD COLUMN IF NOT EXISTS granted_at timestamptz NOT NULL DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -105,6 +110,10 @@ CREATE TABLE IF NOT EXISTS qr_tokens (
   revoked_at timestamptz,
   token_status text NOT NULL DEFAULT 'active' CHECK (token_status IN ('active', 'expired', 'revoked'))
 );
+
+-- Short typed code shown next to the QR, for phones whose camera won't scan.
+ALTER TABLE qr_tokens ADD COLUMN IF NOT EXISTS code_hash text;
+CREATE INDEX IF NOT EXISTS qr_code_hash_idx ON qr_tokens (code_hash) WHERE token_status = 'active';
 
 CREATE TABLE IF NOT EXISTS attendance (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -149,8 +158,11 @@ CREATE TABLE IF NOT EXISTS hostel_entry_logs (
   verification_time timestamptz NOT NULL DEFAULT now(),
   entry_status text NOT NULL CHECK (entry_status IN ('admitted', 'denied', 'exception')),
   verification_method text NOT NULL CHECK (verification_method IN ('live_portal', 'emergency_exception')),
-  exception_reason text
+  exception_reason text,
+  exception_approved_by text
 );
+
+ALTER TABLE hostel_entry_logs ADD COLUMN IF NOT EXISTS exception_approved_by text;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -162,9 +174,12 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   reason text,
   previous_value jsonb,
   new_value jsonb,
+  ip_address text,
   created_at timestamptz NOT NULL DEFAULT now(),
   request_reference uuid NOT NULL
 );
+
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address text;
 
 CREATE TABLE IF NOT EXISTS system_settings (
   id integer PRIMARY KEY CHECK (id = 1),
@@ -213,6 +228,14 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   expires_at timestamptz NOT NULL,
   used_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Editable public website text and images (home page hero, announcement).
+CREATE TABLE IF NOT EXISTS site_content (
+  key text PRIMARY KEY,
+  value text NOT NULL,
+  updated_by uuid REFERENCES users (id),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE SEQUENCE IF NOT EXISTS registration_seq START 1001;

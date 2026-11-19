@@ -1,5 +1,5 @@
 import { database } from "@/lib/db";
-import { hashPassword } from "@/lib/crypto";
+import { hashPassword, newTemporaryPassword } from "@/lib/crypto";
 import { DomainError, isUniqueViolation } from "@/lib/errors";
 import { logAudit } from "@/lib/audit";
 import type { Actor } from "@/lib/permissions";
@@ -83,8 +83,8 @@ export async function registerHostelStaff(
   actor: Actor
 ): Promise<HostelStaff> {
   const db = database();
-  const defaultPassword = input.password || "Hostel-Imasa-2026!";
-  const passwordHash = await hashPassword(defaultPassword);
+  const temporaryPassword = input.password || newTemporaryPassword();
+  const passwordHash = await hashPassword(temporaryPassword);
 
   const hostel = await getHostelById(input.hostelId);
   if (!hostel) throw new DomainError("Hostel not found.", 404);
@@ -126,6 +126,6 @@ export async function registerHostelStaff(
       newValue: { id: staff.id, hostelId: input.hostelId, email: input.email },
     });
 
-    return staff;
+    return { ...staff, temporary_password: temporaryPassword };
   });
 }

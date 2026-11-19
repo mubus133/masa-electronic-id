@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { AsyncLocalStorage } from "async_hooks";
 
 export type Queryable = {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
@@ -59,9 +60,12 @@ export async function migrate(db: Db) {
 
 async function createPglite(): Promise<Db> {
   const { PGlite } = await import("@electric-sql/pglite");
+  const inMemory = process.env.PGLITE_IN_MEMORY === "true";
   const directory = path.join(process.cwd(), ".data/imasa");
-  fs.mkdirSync(directory, { recursive: true });
-  const client = new PGlite(directory);
+  if (!inMemory) fs.mkdirSync(directory, { recursive: true });
+  // DATE columns (oid 1082) stay as YYYY-MM-DD strings so calendar dates never shift by timezone.
+  const options = { parsers: { 1082: (value: string) => value } };
+  const client = inMemory ? new PGlite(options) : new PGlite(directory, options);
   let chain: Promise<unknown> = Promise.resolve();
   const enqueue = <T>(fn: () => Promise<T>) => {
     const run = chain.then(fn, fn);
@@ -94,7 +98,13 @@ async function createPglite(): Promise<Db> {
 
 async function createPostgres(url: string): Promise<Db> {
   const postgres = (await import("postgres")).default;
-  const sql = postgres(url, { max: 10, ssl: url.includes("localhost") ? false : "require" });
+  const sql = postgres(url, {
+    max: 10,
+    ssl: url.includes("localhost") ? false : "require",
+    types: {
+      date: { to: 1082, from: [1082], serialize: (value: string) => value, parse: (value: string) => value },
+    },
+  });
   const queryable = (runner: { unsafe: (query: string, parameters?: any, options?: any) => Promise<any> }): Queryable => ({
     query: async <T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]> => {
       const rows = await runner.unsafe(text, params as never);
@@ -123,9 +133,28 @@ export function databaseMode() {
   return "pglite" as const;
 }
 
+const activeTransaction = new AsyncLocalStorage<Queryable>();
+
+// Queries issued while a transaction is running (audit writes, lookups in helpers)
+// join that transaction instead of waiting on a new connection or queue slot.
+function joinActiveTransactions(db: Db): Db {
+  return {
+    query: (sql, params) => {
+      const tx = activeTransaction.getStore();
+      return tx ? tx.query(sql, params) : db.query(sql, params);
+    },
+    exec: (sql) => db.exec(sql),
+    transaction: (fn) => {
+      const tx = activeTransaction.getStore();
+      if (tx) return fn(tx);
+      return db.transaction((inner) => activeTransaction.run(inner, () => fn(inner)));
+    },
+  };
+}
+
 async function openDatabase() {
-  if (process.env.DATABASE_URL) return createPostgres(process.env.DATABASE_URL);
-  return createPglite();
+  const db = process.env.DATABASE_URL ? await createPostgres(process.env.DATABASE_URL) : await createPglite();
+  return joinActiveTransactions(db);
 }
 
 export async function ensureReady() {

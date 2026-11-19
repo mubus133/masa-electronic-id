@@ -1,5 +1,5 @@
 import { database } from "@/lib/db";
-import { randomBytes } from "crypto";
+import { randomUUID } from "crypto";
 
 export interface LogAuditParams {
   actorUserId?: string | null;
@@ -16,9 +16,10 @@ export interface LogAuditParams {
 }
 
 export async function logAudit(params: LogAuditParams) {
-  try {
-    const db = database();
-    const ref = params.requestReference || randomBytes(16).toString("hex");
+  // Audit writes run inside the caller's transaction, so a failed write
+  // rolls back the action it describes instead of leaving it unrecorded.
+  const db = database();
+  const ref = params.requestReference || randomUUID();
 
     await db.query(
       `INSERT INTO audit_logs (
@@ -29,7 +30,7 @@ export async function logAudit(params: LogAuditParams) {
         params.actorUserId || null,
         params.actorRole,
         params.action,
-        params.affectedRecordType || null,
+        params.affectedRecordType || "system",
         params.affectedRecordId || null,
         params.reason || null,
         params.previousValue ? JSON.stringify(params.previousValue) : null,
@@ -37,9 +38,5 @@ export async function logAudit(params: LogAuditParams) {
         params.ipAddress || null,
         ref,
       ]
-    );
-  } catch (err) {
-    // We do not let audit logging failure silently fail without log, but we don't crash main transaction
-    console.error("Failed to write audit log:", err);
-  }
+  );
 }

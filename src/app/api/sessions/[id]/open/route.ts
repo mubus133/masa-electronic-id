@@ -1,14 +1,13 @@
 import { NextRequest } from "next/server";
 import { handleApiRoute } from "@/lib/api-helper";
-import { requirePermission } from "@/lib/auth";
+import { requireActor } from "@/lib/auth";
 import { openSessionAttendance } from "@/lib/services/sessions";
 
-export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function POST(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   return handleApiRoute(async () => {
-    const actor = await requirePermission("sessions.manage");
+    const actor = await requireActor();
     const { id } = await context.params;
-
-    const session = await openSessionAttendance(id, actor);
-    return { success: true, session };
+    const result = await openSessionAttendance(id, actor);
+    return { success: true, ...("session" in result ? result : { session: result }) };
   });
 }

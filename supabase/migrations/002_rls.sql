@@ -63,3 +63,6 @@ CREATE POLICY support_insert_self ON support_requests FOR INSERT TO authenticate
 DROP POLICY IF EXISTS support_select_self ON support_requests;
 CREATE POLICY support_select_self ON support_requests FOR SELECT TO authenticated
   USING (user_id::text = coalesce(auth.jwt() ->> 'sub', ''));
+
+-- Website content is read and written only through the Next.js server.
+ALTER TABLE site_content ENABLE ROW LEVEL SECURITY;

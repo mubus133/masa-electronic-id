@@ -203,7 +203,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     const confirmed = await confirmAttendance(attendanceId, teacherActor);
     expect(confirmed.attendance_status).toBe("present");
     expect(confirmed.identity_confirmed).toBe(true);
-    expect(confirmed.teacher_confirmed_by).toBe(teacherActor.teacherId);
+    expect(confirmed.teacher_confirmed_by).toBe(teacherActor.id);
   });
 
   it("7. Session completion generates daily authorization only for confirmed present students", async () => {
@@ -251,6 +251,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
         weekday: "Saturday",
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
+        teacherIds: [teacherActor.teacherId!],
       },
       presidentActor
     );
@@ -275,6 +276,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
       {
         fullName: "Test Suspension Student",
         email: `suspend.test.${Date.now()}@imasa.demo`,
+        hostelId: hostelStaffActor.hostelId,
       },
       presidentActor
     );
@@ -286,6 +288,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
         weekday: "Sunday",
         startsAt: new Date().toISOString(),
         endsAt: new Date(Date.now() + 7200000).toISOString(),
+        teacherIds: [teacherActor.teacherId!],
       },
       presidentActor
     );
@@ -297,6 +300,7 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
       teacherActor
     );
 
+    await openSessionAttendance(session.id, teacherActor);
     await completeSession(session.id, presidentActor);
 
     // Verify valid initially
@@ -345,5 +349,79 @@ describe("IMASA Electronic Student ID & Verification Platform Test Suite", () =>
     await expect(
       db.query("DELETE FROM audit_logs WHERE id = $1", [rows[0].id])
     ).rejects.toThrow(/append-only/i);
+  });
+
+  it("13. A teacher not assigned to a session cannot issue codes or confirm attendance", async () => {
+    const session = await createSession(
+      {
+        sessionName: "Unassigned Session",
+        sessionDate: new Date().toISOString().slice(0, 10),
+        startsAt: new Date().toISOString(),
+        endsAt: new Date(Date.now() + 7200000).toISOString(),
+      },
+      presidentActor
+    );
+    await expect(generateSessionQr(session.id, teacherActor)).rejects.toThrow(/assigned/i);
+    await expect(
+      recordManualAttendance(session.id, "50000000-0000-4000-8000-000000000002", "Phone battery died", teacherActor)
+    ).rejects.toThrow(/assigned/i);
+  });
+
+  it("14. Students cannot confirm attendance and QR plaintext is never stored", async () => {
+    const session = await createSession(
+      {
+        sessionName: "Hash Check",
+        sessionDate: new Date().toISOString().slice(0, 10),
+        startsAt: new Date().toISOString(),
+        endsAt: new Date(Date.now() + 7200000).toISOString(),
+        teacherIds: [teacherActor.teacherId!],
+      },
+      presidentActor
+    );
+    const qr = await generateSessionQr(session.id, teacherActor);
+    const token = JSON.parse(qr.qrPayload).token;
+    const db = database();
+    const rows = await db.query<any>("SELECT * FROM qr_tokens WHERE session_id = $1", [session.id]);
+    expect(JSON.stringify(rows)).not.toContain(token);
+
+    const attendance = await submitQrScan({ qrPayload: qr.qrPayload }, studentActor);
+    await expect(confirmAttendance(attendance.id, studentActor)).rejects.toThrow();
+  });
+
+  it("15. A session with pending check-ins cannot be completed", async () => {
+    const rows = await database().query<any>(
+      "SELECT session_id FROM attendance WHERE student_id = $1 AND attendance_status = 'pending' ORDER BY created_at DESC LIMIT 1",
+      [studentActor.studentId]
+    );
+    await expect(completeSession(rows[0].session_id, teacherActor)).rejects.toThrow(/waiting for review/i);
+  });
+
+  it("16. Rejected check-ins never receive a pass", async () => {
+    const rows = await database().query<any>(
+      "SELECT id, session_id FROM attendance WHERE student_id = $1 AND attendance_status = 'pending' ORDER BY created_at DESC LIMIT 1",
+      [studentActor.studentId]
+    );
+    await rejectAttendance(rows[0].id, "Not in the room", teacherActor);
+    const result = await completeSession(rows[0].session_id, teacherActor);
+    expect(result.issuedCount).toBe(0);
+  });
+
+  it("17. A typed check-in code works once per student and earlier codes stay valid until expiry", async () => {
+    const session = await createSession(
+      {
+        sessionName: "Typed Code",
+        sessionDate: new Date().toISOString().slice(0, 10),
+        startsAt: new Date().toISOString(),
+        endsAt: new Date(Date.now() + 7200000).toISOString(),
+        teacherIds: [teacherActor.teacherId!],
+      },
+      presidentActor
+    );
+    const first = await generateSessionQr(session.id, teacherActor);
+    await generateSessionQr(session.id, teacherActor);
+    const attendance = await submitQrScan({ code: first.code.toLowerCase() }, studentActor);
+    expect(attendance.session_id).toBe(session.id);
+    expect(attendance.check_in_method).toBe("qr");
+    await expect(submitQrScan({ code: "AAAA-BBBB" }, studentActor)).rejects.toThrow(/isn't valid/i);
   });
 });

@@ -1,8 +1,9 @@
 import { database } from "@/lib/db";
-import { DomainError } from "@/lib/errors";
+import { badRequest, forbidden, notFound } from "@/lib/access";
 import { logAudit } from "@/lib/audit";
 import { getStudentById } from "@/lib/services/students";
-import { getSystemSettings } from "@/lib/services/sessions";
+import { eligibleAttendanceStatuses, getSystemSettings } from "@/lib/services/sessions";
+import { formatWhen } from "@/lib/time";
 import type { Actor } from "@/lib/permissions";
 import type { DailyAuthorization, VerificationResult } from "@/lib/types";
 
@@ -14,7 +15,9 @@ export async function getStudentLatestAuthorization(studentId: string): Promise<
       ses.session_name,
       ses.session_date,
       h.hostel_name,
-      u.full_name as teacher_name
+      u.full_name as teacher_name,
+      a.attendance_status,
+      ses.session_status
      FROM daily_authorizations da
      JOIN sessions ses ON ses.id = da.session_id
      LEFT JOIN hostels h ON h.id = da.hostel_id
@@ -36,7 +39,9 @@ export async function listStudentAuthorizations(studentId: string): Promise<Dail
       ses.session_name,
       ses.session_date,
       h.hostel_name,
-      u.full_name as teacher_name
+      u.full_name as teacher_name,
+      a.attendance_status,
+      ses.session_status
      FROM daily_authorizations da
      JOIN sessions ses ON ses.id = da.session_id
      LEFT JOIN hostels h ON h.id = da.hostel_id
@@ -48,16 +53,31 @@ export async function listStudentAuthorizations(studentId: string): Promise<Dail
   );
 }
 
+type StudentSummary = VerificationResult["student"];
+
+function deny(
+  verdict: VerificationResult["verdict"],
+  headline: string,
+  reason: string,
+  student: StudentSummary,
+  authorization: VerificationResult["authorization"] = null,
+): VerificationResult {
+  return { valid: false, verdict, headline, reason, student, authorization };
+}
+
+// Live check, run every time staff look a student up. Nothing on the student's
+// screen is trusted: student status, attendance, session state, pass state,
+// expiry and hostel scope are all read fresh from the database.
 export async function verifyDailyAuthorization(
   studentId: string,
-  hostelStaffHostelId?: string | null
+  hostelStaffHostelId?: string | null,
 ): Promise<VerificationResult> {
   const student = await getStudentById(studentId);
-  if (!student) {
-    throw new DomainError("Student record not found.", 404);
-  }
+  if (!student) throw notFound("Student record not found.");
 
-  const baseStudentInfo = {
+  const settings = await getSystemSettings();
+  const tz = settings.timezone || "Africa/Lagos";
+  const summary: StudentSummary = {
     id: student.id,
     fullName: student.full_name,
     registrationNumber: student.registration_number,
@@ -68,315 +88,230 @@ export async function verifyDailyAuthorization(
     classGroup: student.class_group,
   };
 
-  // 1. RE-CHECK STUDENT STATUS (Live security check)
   if (student.student_status === "suspended") {
-    return {
-      valid: false,
-      verdict: "SUSPENDED",
-      headline: "Student Electronic ID is Suspended",
-      reason: `This student's electronic ID has been temporarily suspended by IMASA Administration. Reason: ${student.status_reason || "Administrative review"}. Hostel entry is not authorized.`,
-      student: baseStudentInfo,
-      authorization: null,
-    };
+    return deny("SUSPENDED", "ID suspended", "This student's ID is suspended. Do not admit on a pass; refer to IMASA administration.", summary);
   }
-
   if (student.student_status === "revoked") {
-    return {
-      valid: false,
-      verdict: "REVOKED",
-      headline: "Student Electronic ID is Permanently Revoked",
-      reason: `This student's electronic ID was permanently revoked. Reason: ${student.status_reason || "Disciplinary / withdrawal"}. Hostel entry cannot be authorized.`,
-      student: baseStudentInfo,
-      authorization: null,
-    };
+    return deny("REVOKED", "ID revoked", "This student's ID has been revoked. Do not admit on a pass; refer to IMASA administration.", summary);
   }
-
   if (student.student_status !== "active") {
-    return {
-      valid: false,
-      verdict: "INVALID",
-      headline: `Student Status: ${student.student_status}`,
-      reason: `Student status is ${student.student_status}. Only active students can be authorized.`,
-      student: baseStudentInfo,
-      authorization: null,
-    };
+    return deny("INVALID", `ID ${student.student_status}`, "Only active students can be admitted on a pass.", summary);
   }
 
-  // 2. Fetch latest authorization
   const auth = await getStudentLatestAuthorization(studentId);
   if (!auth) {
-    // Check if there is a pending attendance record
-    const db = database();
-    const pendingAttendance = await db.query<any>(
-      `SELECT a.*, s.session_name, s.session_status 
-       FROM attendance a 
-       JOIN sessions s ON s.id = a.session_id
+    const recent = await database().query<{ attendance_status: string; session_name: string; session_status: string; rejection_reason: string | null }>(
+      `SELECT a.attendance_status, a.rejection_reason, s.session_name, s.session_status
+       FROM attendance a JOIN sessions s ON s.id = a.session_id
        WHERE a.student_id = $1 AND a.created_at >= now() - interval '24 hours'
        ORDER BY a.created_at DESC LIMIT 1`,
-      [studentId]
+      [studentId],
     );
-
-    if (pendingAttendance[0]) {
-      const p = pendingAttendance[0];
-      if (p.attendance_status === "pending") {
-        return {
-          valid: false,
-          verdict: "PENDING",
-          headline: "Attendance Awaiting Teacher Confirmation",
-          reason: `Student scanned for '${p.session_name}', but physical presence has not yet been confirmed by the Madrasa teacher. No pass issued.`,
-          student: baseStudentInfo,
-          authorization: null,
-        };
-      }
-      if (p.session_status !== "completed") {
-        return {
-          valid: false,
-          verdict: "PENDING",
-          headline: "Madrasa Session Not Yet Completed",
-          reason: `Attendance was confirmed, but session '${p.session_name}' is still in progress. Daily authorization will be generated when the session completes.`,
-          student: baseStudentInfo,
-          authorization: null,
-        };
-      }
-      if (p.attendance_status === "rejected") {
-        return {
-          valid: false,
-          verdict: "INVALID",
-          headline: "Attendance Rejected by Teacher",
-          reason: `Attendance for session '${p.session_name}' was rejected by the teacher (${p.rejection_reason || "Absent from class"}). No hostel authorization granted.`,
-          student: baseStudentInfo,
-          authorization: null,
-        };
-      }
+    const latest = recent[0];
+    if (latest?.attendance_status === "pending") {
+      return deny("PENDING", "Waiting for teacher", `Checked in to ${latest.session_name}, but the teacher hasn't confirmed attendance yet. No pass has been issued.`, summary);
     }
-
-    return {
-      valid: false,
-      verdict: "INVALID",
-      headline: "No Daily Authorization Issued",
-      reason: "No record of completed Madrasa attendance or valid daily authorization found for today. Permanent ID does not grant hostel entry.",
-      student: baseStudentInfo,
-      authorization: null,
-    };
+    if (latest?.attendance_status === "rejected") {
+      return deny("INVALID", "Attendance rejected", `The teacher rejected this check-in for ${latest.session_name}${latest.rejection_reason ? `: ${latest.rejection_reason}` : ""}.`, summary);
+    }
+    if (latest && latest.session_status !== "completed") {
+      return deny("PENDING", "Session not completed", `Attendance for ${latest.session_name} is confirmed, but the session hasn't been completed, so no pass has been issued yet.`, summary);
+    }
+    return deny("INVALID", "No pass issued", "There is no pass for this student. A permanent ID alone does not allow hostel entry.", summary);
   }
 
-  const authDetails = {
+  const details = {
     id: auth.id,
     status: auth.authorization_status,
     issuedAt: auth.issued_at,
     expiresAt: auth.expires_at,
     usedAt: auth.used_at,
-    sessionName: auth.session_name || "Madrasa Session",
+    sessionName: auth.session_name || "Session",
     sessionDate: auth.session_date || "",
-    teacherName: auth.teacher_name || "Ustazah In Charge",
-    attendanceStatus: "present" as const,
+    teacherName: auth.teacher_name || "—",
+    attendanceStatus: ((auth as { attendance_status?: string }).attendance_status ?? "present") as never,
   };
 
-  // 3. Check revocation
   if (auth.authorization_status === "revoked") {
-    return {
-      valid: false,
-      verdict: "REVOKED",
-      headline: "Authorization Revoked",
-      reason: `This daily authorization was revoked: ${auth.revocation_reason || "Administrative cancellation"}.`,
-      student: baseStudentInfo,
-      authorization: authDetails,
-    };
+    return deny("REVOKED", "Pass revoked", auth.revoke_reason ? `This pass was revoked: ${auth.revoke_reason}` : "This pass was revoked.", summary, details);
   }
-
-  // 4. Check already redeemed (one-time entry)
   if (auth.authorization_status === "redeemed") {
-    return {
-      valid: false,
-      verdict: "ALREADY_REDEEMED",
-      headline: "Pass Already Redeemed",
-      reason: `This one-time hostel authorization was already used at ${new Date(auth.used_at!).toLocaleTimeString()}. A pass cannot be used more than once.`,
-      student: baseStudentInfo,
-      authorization: authDetails,
-    };
+    return deny("ALREADY_REDEEMED", "Pass already used", `This one-time pass was used at ${formatWhen(auth.used_at, tz)}.`, summary, details);
+  }
+  if (auth.authorization_status === "expired" || new Date(auth.expires_at).getTime() <= Date.now()) {
+    return deny("EXPIRED", "Pass expired", `This pass expired at ${formatWhen(auth.expires_at, tz)}.`, summary, details);
   }
 
-  // 5. Check expiration
-  if (new Date(auth.expires_at).getTime() <= Date.now()) {
-    return {
-      valid: false,
-      verdict: "EXPIRED",
-      headline: "Authorization Expired",
-      reason: `This daily authorization expired at ${new Date(auth.expires_at).toLocaleTimeString()}. The curfew window for this pass has closed.`,
-      student: baseStudentInfo,
-      authorization: authDetails,
-    };
+  const live = auth as { session_status?: string; attendance_status?: string };
+  if (live.session_status !== "completed" || !eligibleAttendanceStatuses(settings).includes(live.attendance_status ?? "")) {
+    return deny("INVALID", "Attendance no longer qualifies", "The attendance or session behind this pass has changed since it was issued.", summary, details);
   }
 
-  // 6. Check hostel scope (if hostel staff is searching and student is assigned to another hostel)
-  const settings = await getSystemSettings();
-  if (settings.require_hostel_assignment && hostelStaffHostelId && student.hostel_id && student.hostel_id !== hostelStaffHostelId) {
-    return {
-      valid: false,
-      verdict: "INVALID",
-      headline: "Wrong Hostel Assignment",
-      reason: `This student is registered to '${student.hostel_name || "a different hostel"}', not this hostel. Please redirect the student to her assigned hostel.`,
-      student: baseStudentInfo,
-      authorization: authDetails,
-    };
+  const passHostel = auth.hostel_id ?? student.hostel_id;
+  if (hostelStaffHostelId && passHostel && passHostel !== hostelStaffHostelId) {
+    return deny("INVALID", "Wrong hostel", `This pass is for ${auth.hostel_name || student.hostel_name || "another hostel"}.`, summary, details);
   }
 
-  // All checks passed!
   return {
     valid: true,
     verdict: "VALID",
-    headline: "Valid Daily Authorization",
-    reason: `Verified Madrasa attendance for '${auth.session_name}'. Confirmed by ${auth.teacher_name}. Authorized for hostel entry until ${new Date(auth.expires_at).toLocaleTimeString()}.`,
-    student: baseStudentInfo,
-    authorization: authDetails,
+    headline: "Valid pass",
+    reason: `Attendance at ${details.sessionName} confirmed by ${details.teacherName}. Valid until ${formatWhen(auth.expires_at, tz)}.`,
+    student: summary,
+    authorization: details,
   };
 }
 
-// ATOMIC REDEMPTION: One-time entry check & transaction
+// Confirms entry. Under one-time entry the status flip is a single conditional
+// UPDATE, so two stations pressing "Admit" at once can't both succeed.
 export async function redeemDailyAuthorization(
   authorizationId: string,
   hostelId: string,
-  actor: Actor
+  actor: Actor,
 ): Promise<{ success: boolean; logId: string; message: string }> {
-  const db = database();
   const settings = await getSystemSettings();
 
-  return await db.transaction(async (tx) => {
-    // 1. Atomically query and lock or conditionally update
-    const authRows = await tx.query<DailyAuthorization>(
-      `SELECT da.*, s.student_status 
-       FROM daily_authorizations da
-       JOIN students s ON s.id = da.student_id
+  return database().transaction(async (tx) => {
+    const rows = await tx.query<DailyAuthorization & { student_status: string; student_hostel_id: string | null }>(
+      `SELECT da.*, s.student_status, s.hostel_id AS student_hostel_id
+       FROM daily_authorizations da JOIN students s ON s.id = da.student_id
        WHERE da.id = $1`,
-      [authorizationId]
+      [authorizationId],
     );
+    const auth = rows[0];
+    if (!auth) throw notFound("Pass not found.");
 
-    const auth = authRows[0];
-    if (!auth) {
-      throw new DomainError("Authorization not found.", 404);
+    const verdict = await verifyDailyAuthorization(auth.student_id, hostelId);
+    if (verdict.authorization?.id !== authorizationId) throw badRequest("This is not the student's current pass. Search again.");
+    if (!verdict.valid) {
+      if (verdict.verdict === "ALREADY_REDEEMED") throw badRequest("This pass has already been redeemed.");
+      throw badRequest(`Entry can't be confirmed: ${verdict.headline.toLowerCase()}.`);
     }
 
-    if ((auth as any).student_status !== "active") {
-      throw new DomainError("Cannot redeem pass: student ID is not active.", 403);
+    if (settings.one_time_entry) {
+      const updated = await tx.query(
+        `UPDATE daily_authorizations SET authorization_status = 'redeemed', used_at = now()
+         WHERE id = $1 AND authorization_status = 'active' AND expires_at > now()
+         RETURNING id`,
+        [authorizationId],
+      );
+      if (!updated.length) throw badRequest("This pass has already been redeemed.");
     }
 
-    if (auth.authorization_status === "revoked") {
-      throw new DomainError("Cannot redeem a revoked authorization.", 400);
-    }
-
-    if (auth.authorization_status === "redeemed" && settings.one_time_entry) {
-      throw new DomainError("This pass has already been redeemed and cannot be used again.", 409);
-    }
-
-    if (new Date(auth.expires_at).getTime() <= Date.now()) {
-      throw new DomainError("This authorization has expired.", 400);
-    }
-
-    // 2. Conditional atomic update: only update if currently active
-    const updateResult = await tx.query<DailyAuthorization>(
-      `UPDATE daily_authorizations
-       SET authorization_status = 'redeemed', used_at = now()
-       WHERE id = $1 AND authorization_status = 'active'
-       RETURNING *`,
-      [authorizationId]
+    const log = await tx.query<{ id: string }>(
+      `INSERT INTO hostel_entry_logs (student_id, authorization_id, hostel_id, verified_by, entry_status, verification_method)
+       VALUES ($1, $2, $3, $4, 'admitted', 'live_portal') RETURNING id`,
+      [auth.student_id, authorizationId, hostelId, actor.id],
     );
-
-    if (updateResult.length === 0 && settings.one_time_entry) {
-      throw new DomainError("Concurrent redemption error: This pass was already redeemed by another station.", 409);
-    }
-
-    // 3. Write immutable hostel entry log
-    const logRows = await tx.query<{ id: string }>(
-      `INSERT INTO hostel_entry_logs (
-        student_id, authorization_id, hostel_id, verified_by,
-        verification_time, entry_status, verification_method
-       ) VALUES ($1, $2, $3, $4, now(), 'approved', 'digital')
-       RETURNING id`,
-      [auth.student_id, authorizationId, hostelId, actor.id]
-    );
-
-    const logId = logRows[0].id;
 
     await logAudit({
       actorUserId: actor.id,
       actorRole: actor.role,
-      action: "hostel.entry_confirmed",
+      action: settings.one_time_entry ? "authorization.redeem" : "hostel.entry_admitted",
       affectedRecordType: "daily_authorization",
       affectedRecordId: authorizationId,
-      reason: "Hostel mistress checked identity and confirmed entry",
-      newValue: { logId, hostelId, studentId: auth.student_id },
+      reason: "Identity checked and entry confirmed at hostel",
+      newValue: { logId: log[0].id, hostelId, studentId: auth.student_id },
     });
 
-    return {
-      success: true,
-      logId,
-      message: "Hostel entry successfully confirmed and authorization marked as redeemed.",
-    };
+    return { success: true, logId: log[0].id, message: "Entry confirmed." };
   });
 }
 
-// EMERGENCY / EXCEPTION HOSTEL ENTRY LOG
-export async function recordHostelExceptionEntry(input: {
-  studentId: string;
-  hostelId: string;
-  reason: string;
-  approvedBy?: string;
-  entryStatus: "approved" | "denied";
-}, actor: Actor) {
-  if (!input.reason || input.reason.trim().length < 5) {
-    throw new DomainError("A substantive exception reason is required for emergency entry logging.", 400);
+// Logs a denial at the desk, or an emergency entry that is explicitly not a pass.
+export async function recordHostelDecision(
+  input: { studentId: string; hostelId: string; reason: string; approvedBy?: string; decision: "denied" | "exception" },
+  actor: Actor,
+) {
+  const reason = input.reason?.trim() ?? "";
+  if (reason.length < 5) throw badRequest("Write a short reason for the record.");
+
+  const student = await getStudentById(input.studentId);
+  if (!student) throw notFound("Student not found.");
+  if (actor.role === "hostel_staff" && student.hostel_id !== actor.hostelId) {
+    throw forbidden("This student is outside your hostel.");
   }
 
-  const db = database();
-  const logRows = await db.query<{ id: string }>(
-    `INSERT INTO hostel_entry_logs (
-      student_id, authorization_id, hostel_id, verified_by,
-      verification_time, entry_status, verification_method,
-      exception_reason, exception_approved_by
-     ) VALUES ($1, null, $2, $3, now(), $4, 'exception', $5, $6)
-     RETURNING id`,
-    [
-      input.studentId,
-      input.hostelId,
-      actor.id,
-      input.entryStatus,
-      input.reason.trim(),
-      input.approvedBy || actor.fullName,
-    ]
-  );
+  if (input.decision === "exception") {
+    const settings = await getSystemSettings();
+    if (!settings.emergency_exceptions_enabled) throw forbidden("Emergency entry is turned off in system settings.");
+    if (!input.approvedBy?.trim()) throw badRequest("Name the person who approved this emergency entry.");
+  }
 
-  const logId = logRows[0].id;
-
-  await logAudit({
-    actorUserId: actor.id,
-    actorRole: actor.role,
-    action: "hostel.exception_entry",
-    affectedRecordType: "hostel_entry_log",
-    affectedRecordId: logId,
-    reason: `Emergency/Exception Entry: ${input.reason.trim()}`,
-    newValue: { studentId: input.studentId, status: input.entryStatus, reason: input.reason.trim() },
+  return database().transaction(async (tx) => {
+    const rows = await tx.query<{ id: string }>(
+      `INSERT INTO hostel_entry_logs (student_id, hostel_id, verified_by, entry_status, verification_method, exception_reason, exception_approved_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [
+        input.studentId,
+        input.hostelId,
+        actor.id,
+        input.decision,
+        input.decision === "exception" ? "emergency_exception" : "live_portal",
+        reason,
+        input.decision === "exception" ? input.approvedBy!.trim() : null,
+      ],
+    );
+    await logAudit({
+      actorUserId: actor.id,
+      actorRole: actor.role,
+      action: input.decision === "exception" ? "hostel.emergency_exception" : "hostel.entry_denied",
+      affectedRecordType: "hostel_entry_log",
+      affectedRecordId: rows[0].id,
+      reason,
+      newValue: { studentId: input.studentId, hostelId: input.hostelId, approvedBy: input.approvedBy ?? null },
+    });
+    return { logId: rows[0].id, success: true };
   });
-
-  return { logId, success: true };
 }
 
-export async function listHostelEntryLogs(hostelId?: string, limit = 50): Promise<any[]> {
-  const db = database();
-  const params: unknown[] = [limit];
+export async function revokeAuthorization(authorizationId: string, reason: string, actor: Actor) {
+  const trimmed = reason?.trim() ?? "";
+  if (trimmed.length < 5) throw badRequest("Give a reason for revoking this pass.");
+  return database().transaction(async (tx) => {
+    const rows = await tx.query<DailyAuthorization>(
+      `UPDATE daily_authorizations SET authorization_status = 'revoked', revoked_at = now(), revoked_by = $2, revoke_reason = $3
+       WHERE id = $1 AND authorization_status = 'active' RETURNING *`,
+      [authorizationId, actor.id, trimmed],
+    );
+    if (!rows.length) throw badRequest("Only an active pass can be revoked.");
+    await logAudit({
+      actorUserId: actor.id,
+      actorRole: actor.role,
+      action: "authorization.revoke",
+      affectedRecordType: "daily_authorization",
+      affectedRecordId: authorizationId,
+      reason: trimmed,
+      newValue: { status: "revoked" },
+    });
+    return rows[0];
+  });
+}
+
+export async function listAllAuthorizations(limit = 200) {
+  return database().query(
+    `SELECT da.*, s.full_name AS student_name, s.registration_number, s.photograph_url,
+            h.hostel_name, ses.session_name, ses.session_date
+     FROM daily_authorizations da
+     JOIN students s ON s.id = da.student_id
+     LEFT JOIN hostels h ON h.id = da.hostel_id
+     JOIN sessions ses ON ses.id = da.session_id
+     ORDER BY da.issued_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+}
+
+export async function listHostelEntryLogs(hostelId?: string, limit = 50) {
+  const params: unknown[] = [Math.min(Math.max(limit, 1), 500)];
   let filter = "";
   if (hostelId) {
     params.push(hostelId);
     filter = "WHERE hel.hostel_id = $2";
   }
-
-  return await db.query<any>(
-    `SELECT 
-      hel.*,
-      s.full_name as student_name,
-      s.registration_number,
-      s.photograph_url,
-      h.hostel_name,
-      u.full_name as verified_by_name
+  return database().query(
+    `SELECT hel.*, s.full_name AS student_name, s.registration_number, s.photograph_url,
+            h.hostel_name, u.full_name AS verified_by_name
      FROM hostel_entry_logs hel
      JOIN students s ON s.id = hel.student_id
      JOIN hostels h ON h.id = hel.hostel_id
@@ -384,6 +319,6 @@ export async function listHostelEntryLogs(hostelId?: string, limit = 50): Promis
      ${filter}
      ORDER BY hel.verification_time DESC
      LIMIT $1`,
-    params
+    params,
   );
 }

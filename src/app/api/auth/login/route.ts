@@ -1,9 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { database, ensureReady } from "@/lib/db";
 import { verifyPassword } from "@/lib/crypto";
-import { createSessionCookie, clearSessionCookie, getCurrentActor } from "@/lib/auth";
+import { createSessionCookie } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
-import { DomainError } from "@/lib/errors";
+
+const WINDOW_MS = 15 * 60_000;
+const MAX_FAILURES = 8;
+const failures = new Map<string, { count: number; first: number }>();
+
+function tooManyAttempts(key: string) {
+  const entry = failures.get(key);
+  if (!entry) return false;
+  if (Date.now() - entry.first > WINDOW_MS) {
+    failures.delete(key);
+    return false;
+  }
+  return entry.count >= MAX_FAILURES;
+}
+
+function noteFailure(key: string) {
+  const entry = failures.get(key);
+  if (!entry || Date.now() - entry.first > WINDOW_MS) failures.set(key, { count: 1, first: Date.now() });
+  else entry.count += 1;
+}
+
+async function rejectLogin(key: string, userId: string | null, role: string | null) {
+  noteFailure(key);
+  await logAudit({
+    actorUserId: userId,
+    actorRole: role ?? "anonymous",
+    action: "auth.login_failed",
+    affectedRecordType: "user",
+    affectedRecordId: userId,
+    reason: "Failed sign-in attempt",
+  });
+  return NextResponse.json({ error: "That email or password is incorrect." }, { status: 401 });
+}
 
 export async function POST(req: NextRequest) {
   await ensureReady();
@@ -13,7 +45,12 @@ export async function POST(req: NextRequest) {
     const password = body.password || "";
 
     if (!identifier || !password) {
-      return NextResponse.json({ error: "Please enter your email/username and password." }, { status: 400 });
+      return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
+    }
+
+    const key = identifier;
+    if (tooManyAttempts(key)) {
+      return NextResponse.json({ error: "Too many attempts. Wait 15 minutes and try again." }, { status: 429 });
     }
 
     const db = database();
@@ -23,17 +60,14 @@ export async function POST(req: NextRequest) {
     );
 
     const user = users[0];
-    if (!user || !user.password_hash) {
-      return NextResponse.json({ error: "Invalid credentials. Please verify your email and password." }, { status: 401 });
-    }
+    if (!user || !user.password_hash) return rejectLogin(key, null, null);
 
     const valid = await verifyPassword(password, user.password_hash);
-    if (!valid) {
-      return NextResponse.json({ error: "Invalid credentials. Please verify your email and password." }, { status: 401 });
-    }
+    if (!valid) return rejectLogin(key, user.id, user.role);
+    failures.delete(key);
 
     if (user.account_status !== "active") {
-      return NextResponse.json({ error: `Account is ${user.account_status}. Please contact IMASA administration.` }, { status: 403 });
+      return NextResponse.json({ error: `This account is ${user.account_status}. Contact IMASA administration.` }, { status: 403 });
     }
 
     // Set HTTP-only session cookie
@@ -62,6 +96,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: unknown) {
     console.error("Login error:", err);
-    return NextResponse.json({ error: "An error occurred during authentication." }, { status: 500 });
+    return NextResponse.json({ error: "Sign-in failed. Try again in a moment." }, { status: 500 });
   }
 }

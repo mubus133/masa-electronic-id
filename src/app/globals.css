@@ -1,72 +1,88 @@
 @import "tailwindcss";
 
 @theme {
-  --color-navy: #142B4A;
-  --color-navy-dark: #0D1E35;
-  --color-navy-light: #1E3A5F;
-  --color-teal: #0F766E;
-  --color-teal-dark: #0B5C55;
-  --color-teal-light: #14B8A6;
-  --color-ivory: #F7F8FA;
-  --color-surface: #FFFFFF;
-  --color-slate-muted: #64748B;
-  --color-border-light: #E2E8F0;
-  --color-gold: #C8A45D;
-  --color-gold-light: #DFCA97;
-  --color-success: #15803D;
-  --color-success-bg: #F0FDF4;
-  --color-warning: #D97706;
-  --color-warning-bg: #FFFBEB;
-  --color-danger: #B42318;
-  --color-danger-bg: #FEF2F2;
+  --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-}
+  --color-canvas: #f6f5f1;
+  --color-panel: #ffffff;
+  --color-sunken: #efede7;
+  --color-line: #e3e0d8;
+  --color-line-strong: #cbc7bc;
 
-:root {
-  --background: #F7F8FA;
-  --foreground: #142B4A;
-  --card: #FFFFFF;
-  --card-foreground: #142B4A;
-  --border: #E2E8F0;
-  --ring: #0F766E;
-}
+  --color-ink: #16212e;
+  --color-ink-2: #46505c;
+  --color-ink-3: #6b7380;
 
-body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --color-brand: #1f5f4a;
+  --color-brand-strong: #174a39;
+  --color-brand-soft: #e6efea;
+  --color-brand-ink: #123b2d;
+
+  --color-ok: #1d6b3a;
+  --color-ok-soft: #e5f2e9;
+  --color-warn: #8a5a00;
+  --color-warn-soft: #fbf0d9;
+  --color-bad: #a32222;
+  --color-bad-soft: #fbe8e6;
+  --color-info: #23508f;
+  --color-info-soft: #e7eef8;
+
+  --radius-control: 0.5rem;
+  --radius-panel: 0.75rem;
 }
 
-/* Custom scrollbars */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #F1F5F9;
-}
-::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+  }
+
+  /* iOS zooms into inputs under 16px; keep form text at 16px on phones. */
+  @media (max-width: 639px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
 }
 
-/* ID Card Watermark */
-.imasa-watermark {
-  background-image: radial-gradient(circle at center, rgba(20, 43, 74, 0.03) 0%, transparent 70%);
-}
-
-/* Pulsing badge animation for active verification */
-@keyframes pulse-subtle {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.8; }
-}
-
-.animate-pulse-subtle {
-  animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

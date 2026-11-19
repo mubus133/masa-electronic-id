@@ -24,6 +24,14 @@ export async function verifyPassword(password: string, stored: string) {
   return timingSafeEqual(actual, derived);
 }
 
+const TEMP_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+
+// Readable one-time password handed to a new user, e.g. "k7pd-3qwx-m2fh".
+export function newTemporaryPassword() {
+  const chars = Array.from(randomBytes(12), (byte) => TEMP_ALPHABET[byte % TEMP_ALPHABET.length]).join("");
+  return `${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8)}`;
+}
+
 export function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -33,7 +41,12 @@ export function randomToken() {
 }
 
 export function sessionSecret() {
-  return process.env.SESSION_SECRET || "dev-only-insecure-session-secret";
+  const secret = process.env.SESSION_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("SESSION_SECRET must be set in production.");
+  }
+  return "dev-only-insecure-session-secret";
 }
 
 export function sessionSecretIsDefault() {

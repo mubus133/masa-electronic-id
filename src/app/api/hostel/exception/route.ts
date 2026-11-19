@@ -1,40 +1,21 @@
 import { NextRequest } from "next/server";
 import { handleApiRoute } from "@/lib/api-helper";
+import { badRequest, forbidden, isActiveHostelStaff } from "@/lib/access";
 import { requireActor } from "@/lib/auth";
-import { recordHostelExceptionEntry } from "@/lib/services/authorizations";
+import { recordHostelDecision } from "@/lib/services/authorizations";
 
+// Records a denial, or an emergency entry that is logged separately from passes.
 export async function POST(req: NextRequest) {
   return handleApiRoute(async () => {
     const actor = await requireActor();
-    if (actor.role !== "hostel_staff" && actor.role !== "super_admin" && actor.role !== "administrator") {
-      throw new Error("Access restricted to hostel staff and administrators.");
-    }
-
-    const body = await req.json();
-    if (!body.studentId || !body.reason) {
-      throw new Error("Student ID and substantive exception reason are required.");
-    }
-
-    const hostelId = body.hostelId || actor.hostelId;
-    if (!hostelId) {
-      throw new Error("Hostel assignment is required to log exception entry.");
-    }
-
-    const result = await recordHostelExceptionEntry(
-      {
-        studentId: body.studentId,
-        hostelId,
-        reason: body.reason,
-        approvedBy: body.approvedBy,
-        entryStatus: body.entryStatus || "approved",
-      },
-      actor
+    if (!isActiveHostelStaff(actor)) throw forbidden("Only hostel staff can record entry decisions.");
+    const body = await req.json().catch(() => ({}));
+    if (!body.studentId) throw badRequest("Pick a student first.");
+    const decision = body.decision === "exception" ? "exception" : "denied";
+    const result = await recordHostelDecision(
+      { studentId: body.studentId, hostelId: actor.hostelId!, reason: body.reason || "", approvedBy: body.approvedBy, decision },
+      actor,
     );
-
-    return {
-      success: true,
-      logId: result.logId,
-      message: "Emergency exception entry recorded with audit reference.",
-    };
+    return { success: true, logId: result.logId };
   });
 }

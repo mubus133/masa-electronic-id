@@ -8,10 +8,10 @@ export type TeacherStatus = "active" | "inactive";
 export type HostelStatus = "active" | "inactive";
 export type SessionStatus = "scheduled" | "open" | "closed" | "completed" | "cancelled";
 export type AttendanceStatus = "pending" | "present" | "late" | "rejected" | "absent" | "excused";
-export type CheckInMethod = "qr_scan" | "manual";
+export type CheckInMethod = "qr" | "manual" | "offline";
 export type AuthorizationStatus = "active" | "expired" | "revoked" | "redeemed";
-export type EntryStatus = "approved" | "denied" | "exception";
-export type EntryMethod = "digital" | "manual" | "exception";
+export type EntryStatus = "admitted" | "denied" | "exception";
+export type EntryMethod = "live_portal" | "emergency_exception";
 
 export interface User {
   id: string;
@@ -35,6 +35,7 @@ export interface Student {
   photograph_url: string | null;
   hostel_id: string | null;
   hostel_name?: string;
+  email?: string;
   class_group: string | null;
   phone: string | null;
   emergency_contact: string | null;
@@ -106,7 +107,6 @@ export interface QrToken {
   id: string;
   session_id: string;
   token_hash: string;
-  token_plaintext?: string;
   issued_by: string;
   issued_at: string;
   expires_at: string;
@@ -120,13 +120,13 @@ export interface Attendance {
   check_in_at: string;
   check_in_method: CheckInMethod;
   attendance_status: AttendanceStatus;
-  sync_status: "synced" | "pending_sync";
+  sync_status: "synced" | "awaiting_sync";
   teacher_confirmed_by: string | null;
   teacher_confirmed_at: string | null;
   identity_confirmed: boolean;
   rejection_reason: string | null;
   manual_reason: string | null;
-  manual_verified_by: string | null;
+  teacher_name?: string | null;
   created_at: string;
   student_name?: string;
   registration_number?: string;
@@ -146,7 +146,7 @@ export interface DailyAuthorization {
   authorization_status: AuthorizationStatus;
   revoked_at: string | null;
   revoked_by: string | null;
-  revocation_reason: string | null;
+  revoke_reason: string | null;
   used_at: string | null;
   hostel_id: string | null;
   created_at: string;
@@ -196,7 +196,7 @@ export interface SystemSettings {
   id: number;
   timezone: string;
   qr_ttl_seconds: number;
-  pass_expiry_mode: "end_of_day" | "fixed_hours";
+  pass_expiry_mode: "end_of_day" | "hours_after_completion";
   pass_expiry_hours: number;
   one_time_entry: boolean;
   late_attendance_allowed: boolean;

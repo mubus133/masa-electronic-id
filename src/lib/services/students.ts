@@ -1,5 +1,5 @@
 import { database } from "@/lib/db";
-import { hashPassword } from "@/lib/crypto";
+import { hashPassword, newTemporaryPassword } from "@/lib/crypto";
 import { DomainError, isUniqueViolation } from "@/lib/errors";
 import { logAudit } from "@/lib/audit";
 import type { Actor } from "@/lib/permissions";
@@ -65,7 +65,7 @@ export async function listStudents(options: {
     `SELECT 
       s.id, s.user_id, s.registration_number, s.full_name, s.photograph_url,
       s.hostel_id, h.hostel_name, s.class_group, s.phone, s.emergency_contact,
-      s.student_status, s.date_registered, s.created_by, s.updated_at, s.status_reason
+      s.student_status, s.date_registered, s.created_by, s.updated_at, s.status_reason, u.email
      FROM students s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN hostels h ON h.id = s.hostel_id
@@ -125,8 +125,8 @@ export async function getStudentByRegistration(regNo: string): Promise<Student |
 
 export async function registerStudent(input: RegisterStudentInput, actor: Actor): Promise<Student> {
   const db = database();
-  const defaultPassword = input.password || "Student-Imasa-2026!";
-  const passwordHash = await hashPassword(defaultPassword);
+  const temporaryPassword = input.password || newTemporaryPassword();
+  const passwordHash = await hashPassword(temporaryPassword);
   const regNumber = await generateNextRegistrationNumber();
 
   return await db.transaction(async (tx) => {
@@ -191,7 +191,7 @@ export async function registerStudent(input: RegisterStudentInput, actor: Actor)
       newValue: { id: student.id, registrationNumber: regNumber, email: input.email },
     });
 
-    return student;
+    return { ...student, temporary_password: temporaryPassword };
   });
 }
 
@@ -282,7 +282,7 @@ export async function suspendStudent(id: string, reason: string, actor: Actor): 
     await tx.query(
       `UPDATE daily_authorizations
        SET authorization_status = 'revoked', revoked_at = now(), revoked_by = $2,
-           revocation_reason = $3
+           revoke_reason = $3
        WHERE student_id = $1 AND authorization_status = 'active'`,
       [id, actor.id, `Automatic revocation due to ID suspension: ${reason.trim()}`]
     );
@@ -330,7 +330,7 @@ export async function revokeStudent(id: string, reason: string, actor: Actor): P
     await tx.query(
       `UPDATE daily_authorizations
        SET authorization_status = 'revoked', revoked_at = now(), revoked_by = $2,
-           revocation_reason = $3
+           revoke_reason = $3
        WHERE student_id = $1 AND authorization_status = 'active'`,
       [id, actor.id, `Permanent revocation of student ID: ${reason.trim()}`]
     );

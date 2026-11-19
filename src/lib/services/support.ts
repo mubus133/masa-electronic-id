@@ -10,16 +10,17 @@ export async function createSupportRequest(input: {
   subject: string;
   message: string;
 }): Promise<SupportRequest> {
-  if (!input.subject.trim() || !input.message.trim()) {
-    throw new DomainError("Subject and message are required.", 400);
-  }
+  const subject = String(input.subject ?? "").trim().slice(0, 200);
+  const message = String(input.message ?? "").trim().slice(0, 5000);
+  if (!subject || !message) throw new DomainError("Add a subject and a message.", 400);
+  const category = ["technical", "dispute", "account", "other"].includes(input.category) ? input.category : "other";
 
   const db = database();
   const rows = await db.query<SupportRequest>(
     `INSERT INTO support_requests (user_id, category, subject, message, status)
      VALUES ($1, $2, $3, $4, 'open')
      RETURNING *`,
-    [input.userId || null, input.category, input.subject.trim(), input.message.trim()]
+    [input.userId || null, category, subject, message]
   );
 
   return rows[0];
