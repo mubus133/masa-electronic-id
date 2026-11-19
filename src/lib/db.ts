@@ -128,6 +128,23 @@ export function shouldSeedDemo() {
   return process.env.NODE_ENV !== "production";
 }
 
+// On a fresh production database, creates the President's account from
+// PRESIDENT_EMAIL / PRESIDENT_PASSWORD / PRESIDENT_NAME. Does nothing once any user exists.
+async function createFirstPresident(db: Db) {
+  const email = process.env.PRESIDENT_EMAIL?.trim().toLowerCase();
+  const password = process.env.PRESIDENT_PASSWORD;
+  if (!email || !password) return;
+  const existing = await db.query<{ count: number }>("SELECT count(*)::int AS count FROM users");
+  if (Number(existing[0]?.count ?? 0) > 0) return;
+  if (password.length < 12) throw new Error("PRESIDENT_PASSWORD must be at least 12 characters.");
+  const { hashPassword } = await import("@/lib/crypto");
+  await db.query(
+    `INSERT INTO users (email, password_hash, role, account_status, full_name)
+     VALUES ($1, $2, 'super_admin', 'active', $3)`,
+    [email, await hashPassword(password), process.env.PRESIDENT_NAME?.trim() || "President of IMASA"],
+  );
+}
+
 export function databaseMode() {
   if (process.env.DATABASE_URL) return "postgres" as const;
   return "pglite" as const;
@@ -169,6 +186,7 @@ export async function ensureReady() {
         const { seedDemoIfEmpty } = await import("@/lib/seed");
         await seedDemoIfEmpty(db);
       }
+      await createFirstPresident(db);
     })();
   }
   await store.imasaReady;
