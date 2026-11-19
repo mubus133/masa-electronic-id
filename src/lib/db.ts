@@ -128,6 +128,16 @@ export function shouldSeedDemo() {
   return process.env.NODE_ENV !== "production";
 }
 
+async function loadSessionKey(db: Db) {
+  if (process.env.SESSION_SECRET) return;
+  const { randomBytes } = await import("crypto");
+  await db.query("INSERT INTO app_secrets (name, value) VALUES ('session', $1) ON CONFLICT (name) DO NOTHING", [
+    randomBytes(48).toString("base64url"),
+  ]);
+  const rows = await db.query<{ value: string }>("SELECT value FROM app_secrets WHERE name = 'session'");
+  (globalThis as { imasaSessionSecret?: string }).imasaSessionSecret = rows[0].value;
+}
+
 // On a fresh production database, creates the President's account from
 // PRESIDENT_EMAIL / PRESIDENT_PASSWORD / PRESIDENT_NAME. Does nothing once any user exists.
 async function createFirstPresident(db: Db) {
@@ -186,6 +196,7 @@ export async function ensureReady() {
         const { seedDemoIfEmpty } = await import("@/lib/seed");
         await seedDemoIfEmpty(db);
       }
+      await loadSessionKey(db);
       await createFirstPresident(db);
     })();
   }

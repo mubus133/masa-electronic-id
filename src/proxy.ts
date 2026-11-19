@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { readPayload } from "@/lib/crypto";
+import { peekPayload } from "@/lib/crypto";
 import { homeForRole, type Role } from "@/lib/permissions";
 
-// Optimistic gate only: sends signed-out visitors to sign-in and keeps each role
+// Optimistic gate only (the cookie isn't verified here): sends signed-out visitors to sign-in and keeps each role
 // in its own portal. Every API route still checks the account and permissions.
 const AREAS: { prefix: string; roles: Role[] }[] = [
   { prefix: "/student", roles: ["student"] },
@@ -14,7 +14,7 @@ const AREAS: { prefix: string; roles: Role[] }[] = [
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const area = AREAS.find((item) => pathname === item.prefix || pathname.startsWith(`${item.prefix}/`));
-  const session = readPayload<{ role: Role; exp: number }>(request.cookies.get("imasa_session")?.value);
+  const session = peekPayload<{ role: Role; exp: number }>(request.cookies.get("imasa_session")?.value);
   const signedIn = session && session.exp > Date.now() / 1000;
 
   if (pathname === "/login" && signedIn) {

@@ -238,6 +238,13 @@ CREATE TABLE IF NOT EXISTS site_content (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Server-generated keys, e.g. the cookie signing key when SESSION_SECRET isn't set.
+CREATE TABLE IF NOT EXISTS app_secrets (
+  name text PRIMARY KEY,
+  value text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE SEQUENCE IF NOT EXISTS registration_seq START 1001;
 CREATE SEQUENCE IF NOT EXISTS teacher_code_seq START 101;
 

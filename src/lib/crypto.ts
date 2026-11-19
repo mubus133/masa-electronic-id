@@ -40,13 +40,27 @@ export function randomToken() {
   return randomBytes(32).toString("base64url");
 }
 
+// SESSION_SECRET wins when set. Otherwise the server generates a key on first
+// start and keeps it in the database (see ensureReady), so every instance shares it.
 export function sessionSecret() {
-  const secret = process.env.SESSION_SECRET;
+  const secret = process.env.SESSION_SECRET || (globalThis as { imasaSessionSecret?: string }).imasaSessionSecret;
   if (secret) return secret;
   if (process.env.NODE_ENV === "production") {
-    throw new Error("SESSION_SECRET must be set in production.");
+    throw new Error("Session key isn't loaded yet.");
   }
   return "dev-only-insecure-session-secret";
+}
+
+// Reads a session cookie without checking its signature. Only for the proxy's
+// optimistic redirects; every API route verifies the cookie properly.
+export function peekPayload<T>(token: string | undefined | null): T | null {
+  const body = token?.split(".")[0];
+  if (!body) return null;
+  try {
+    return JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T;
+  } catch {
+    return null;
+  }
 }
 
 export function sessionSecretIsDefault() {

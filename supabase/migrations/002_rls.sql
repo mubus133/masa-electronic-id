@@ -66,3 +66,4 @@ CREATE POLICY support_select_self ON support_requests FOR SELECT TO authenticate
 
 -- Website content is read and written only through the Next.js server.
 ALTER TABLE site_content ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_secrets ENABLE ROW LEVEL SECURITY;
