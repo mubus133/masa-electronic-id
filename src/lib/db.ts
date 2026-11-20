@@ -107,6 +107,7 @@ async function createPostgres(url: string): Promise<Db> {
   const sql = postgres(url, {
     max: 10,
     ssl: url.includes("localhost") ? false : "require",
+    onnotice: () => undefined, // "already exists, skipping" notices from re-run migrations
     types: {
       date: { to: 1082, from: [1082], serialize: (value: string) => value, parse: (value: string) => value },
     },
@@ -152,7 +153,11 @@ async function createFirstPresident(db: Db) {
   if (!email || !password) return;
   const existing = await db.query<{ count: number }>("SELECT count(*)::int AS count FROM users");
   if (Number(existing[0]?.count ?? 0) > 0) return;
-  if (password.length < 12) throw new Error("PRESIDENT_PASSWORD must be at least 12 characters.");
+  if (password.length < 12) {
+    // Don't take the whole site down over this; report it and wait for a fixed value.
+    console.error("PRESIDENT_PASSWORD is shorter than 12 characters, so the President account was not created.");
+    return;
+  }
   const { hashPassword } = await import("@/lib/crypto");
   await db.query(
     `INSERT INTO users (email, password_hash, role, account_status, full_name)
