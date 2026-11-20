@@ -38,7 +38,7 @@ npm test
 | `DATABASE_URL` | Postgres connection string (e.g. Supabase). Migrations in `supabase/migrations` run on start. |
 | `SESSION_SECRET` | Optional. Key for signing sign-in cookies. If unset, the server generates one on first start and stores it in the database. |
 | `SEED_DEMO` | Leave unset (or `false`) in production so no demo accounts are created. |
-| `PRESIDENT_EMAIL`, `PRESIDENT_PASSWORD`, `PRESIDENT_NAME` | Creates the President's account on first start, only when the database has no users. Password at least 12 characters. Remove these variables once the account exists. |
+| `PRESIDENT_EMAIL`, `PRESIDENT_PASSWORD`, `PRESIDENT_NAME` | Creates the President's account on first start, only when the database has no users. Password at least 8 characters. Remove these variables once the account exists. |
 
 Apply `supabase/migrations/002_rls.sql` in Supabase for row-level security on direct client access.
 

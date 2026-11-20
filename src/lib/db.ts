@@ -153,9 +153,9 @@ async function createFirstPresident(db: Db) {
   if (!email || !password) return;
   const existing = await db.query<{ count: number }>("SELECT count(*)::int AS count FROM users");
   if (Number(existing[0]?.count ?? 0) > 0) return;
-  if (password.length < 12) {
+  if (password.length < 8) {
     // Don't take the whole site down over this; report it and wait for a fixed value.
-    console.error("PRESIDENT_PASSWORD is shorter than 12 characters, so the President account was not created.");
+    console.error("PRESIDENT_PASSWORD is shorter than 8 characters, so the President account was not created.");
     return;
   }
   const { hashPassword } = await import("@/lib/crypto");
