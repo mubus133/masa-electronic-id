@@ -28,7 +28,13 @@ export function database() {
   return db;
 }
 
-export function splitSql(sql: string) {
+// Splits a migration into statements. Line comments are dropped first so a
+// semicolon inside a comment can't cut a statement in half.
+export function splitSql(source: string) {
+  const sql = source
+    .split("\n")
+    .map((line) => line.replace(/^\s*--.*$/, "").replace(/\s--\s.*$/, ""))
+    .join("\n");
   const statements: string[] = [];
   let current = "";
   let dollar = false;
